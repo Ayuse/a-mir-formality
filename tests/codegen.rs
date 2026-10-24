@@ -662,3 +662,61 @@ fn field_evaluation_order() {
     .expect_output("2\n1\n10\n20\n")
     .ok();
 }
+
+#[test]
+fn integer_multiplication() {
+    FormalityTest::new(crates![crate Foo {
+        fn main() -> () {
+            println!(3_i32 * 4_i32);
+        }
+    }])
+    .expect_output("12\n")
+    .ok();
+}
+
+#[test]
+fn multiplication_takes_precedence_over_addition() {
+    FormalityTest::new(crates![crate Foo {
+        fn main() -> () {
+            println!(2_i32 + 3_i32 * 4_i32);
+            println!(2_i32 * 3_i32 + 4_i32);
+            println!(2_i32 + 3_i32 * 4_i32 * 2_i32);
+        }
+    }])
+    .expect_output("14\n10\n26\n")
+    .ok();
+}
+
+#[test]
+fn integer_multiplication_negative_result() {
+    FormalityTest::new(crates![crate Foo {
+        fn main() -> () {
+            println!(-3_i32 * 4_i32);
+        }
+    }])
+    .expect_output("-12\n")
+    .ok();
+}
+
+#[test]
+fn integer_multiplication_unsigned() {
+    FormalityTest::new(crates![crate Foo {
+        fn main() -> () {
+            println!(3_u32 * 4_u32);
+        }
+    }])
+    .expect_output("12\n")
+    .ok();
+}
+
+#[test]
+fn multiplication_evaluates_calls_left_to_right() {
+    FormalityTest::new(crates![crate Foo {
+        fn left() -> i32 { println!(1_i32); return 3_i32; }
+        fn right() -> i32 { println!(2_i32); return 4_i32; }
+        fn main() -> () { println!(left() * right()); }
+    }])
+    .rustc_ok()
+    .expect_output("1\n2\n12\n")
+    .ok();
+}

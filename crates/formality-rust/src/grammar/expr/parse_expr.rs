@@ -1,13 +1,13 @@
-use super::Literal;
+use super::{BinOpKind, Expr, FieldExpr, Literal, PlaceExpr, Turbofish};
 use crate::{
-    grammar::{expr::IntegerValue, ScalarId},
+    grammar::{expr::IntegerValue, AdtId, Lt, Parameter, RefKind, ScalarId, ValueId},
     rust::FormalityLang as Rust,
 };
 use formality_core::{
-    parse::{CoreParse, ParseError, ParseResult, Parser, Scope},
+    parse::{CoreParse, ParseError, ParseResult, Parser, Precedence, Scope},
     Set,
 };
-use std::fmt::Debug;
+use std::{fmt::Debug, sync::Arc};
 
 impl Debug for Literal {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -91,4 +91,118 @@ fn try_into_u128(
         ));
     }
     Ok(number)
+}
+
+// The operator determines precedence, so the two BinOp cases are parsed
+// separately while both produce the same Expr::BinOp representation.
+impl CoreParse<Rust> for Expr {
+    fn parse<'t>(scope: &Scope<Rust>, text: &'t str) -> ParseResult<'t, Self> {
+        Parser::multi_variant(scope, text, "Expr", |parser| {
+            parser.parse_variant("Expr::Assign", Precedence::right(0), |p| {
+                p.each_nonterminal(|place: PlaceExpr, p| {
+                    p.expect_char('=')?;
+                    p.each_nonterminal(|expr: Arc<Expr>, p| {
+                        p.ok(Expr::Assign {
+                            place: place.clone(),
+                            expr,
+                        })
+                    })
+                })
+            });
+
+            parser.parse_variant("Expr::Call", Precedence::default(), |p| {
+                p.each_nonterminal(|callee: Arc<Expr>, p| {
+                    if matches!(&*callee, Expr::Assign { .. } | Expr::BinOp { .. }) {
+                        return Err(ParseError::at(
+                            p.text(),
+                            "invalid function callee".to_string(),
+                        ));
+                    }
+                    p.expect_char('(')?;
+                    p.each_comma_nonterminal(|args: Vec<Expr>, p| {
+                        p.expect_char(')')?;
+                        p.ok(Expr::Call {
+                            callee: callee.clone(),
+                            args,
+                        })
+                    })
+                })
+            });
+
+            parser.parse_variant_cast::<Literal>(Precedence::default());
+            parser.parse_variant("Expr::True", Precedence::default(), |p| {
+                p.expect_keyword("true")?;
+                p.ok(Expr::True)
+            });
+            parser.parse_variant("Expr::False", Precedence::default(), |p| {
+                p.expect_keyword("false")?;
+                p.ok(Expr::False)
+            });
+
+            parser.parse_variant("Expr::Ref", Precedence::default(), |p| {
+                p.expect_char('&')?;
+                p.each_nonterminal(|lt: Lt, p| {
+                    p.each_opt_nonterminal(|kind: Option<RefKind>, p| {
+                        p.each_nonterminal(|place: PlaceExpr, p| {
+                            p.ok(Expr::Ref {
+                                kind: kind.clone().unwrap_or_default(),
+                                lt: lt.clone(),
+                                place,
+                            })
+                        })
+                    })
+                })
+            });
+
+            parser.parse_variant_cast::<PlaceExpr>(Precedence::default());
+            parser.parse_variant("Expr::Turbofish", Precedence::default(), |p| {
+                p.each_nonterminal(|id: ValueId, p| {
+                    p.expect_char(':')?;
+                    p.expect_char(':')?;
+                    p.expect_char('<')?;
+                    p.each_comma_nonterminal(|args: Vec<Parameter>, p| {
+                        p.expect_char('>')?;
+                        p.ok(Expr::Turbofish {
+                            id: id.clone(),
+                            args,
+                        })
+                    })
+                })
+            });
+
+            parser.parse_variant("Expr::Struct", Precedence::default(), |p| {
+                p.each_nonterminal(|adt_id: AdtId, p| {
+                    p.each_opt_nonterminal(|turbofish: Option<Turbofish>, p| {
+                        p.expect_char('{')?;
+                        p.each_comma_nonterminal(|field_exprs: Vec<FieldExpr>, p| {
+                            p.expect_char('}')?;
+                            p.ok(Expr::Struct {
+                                field_exprs,
+                                adt_id: adt_id.clone(),
+                                turbofish: turbofish.clone().unwrap_or_default(),
+                            })
+                        })
+                    })
+                })
+            });
+
+            for (op, level) in [(BinOpKind::Add, 1), (BinOpKind::Mul, 2)] {
+                parser.parse_variant("Expr::BinOp", Precedence::left(level), |p| {
+                    p.each_nonterminal(|lhs: Arc<Expr>, p| {
+                        p.expect_char(match op {
+                            BinOpKind::Add => '+',
+                            BinOpKind::Mul => '*',
+                        })?;
+                        p.each_nonterminal(|rhs: Arc<Expr>, p| {
+                            p.ok(Expr::BinOp {
+                                lhs: lhs.clone(),
+                                op: op.clone(),
+                                rhs,
+                            })
+                        })
+                    })
+                });
+            }
+        })
+    }
 }

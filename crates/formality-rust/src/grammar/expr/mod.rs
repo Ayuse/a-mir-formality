@@ -151,6 +151,7 @@ pub enum Stmt {
 }
 
 #[term]
+#[customize(parse)]
 pub enum Expr {
     /// `place = expr`
     ///
@@ -311,12 +312,15 @@ pub enum FnName {
 pub enum BinOpKind {
     #[grammar(+)]
     Add,
+    #[grammar(*)]
+    Mul,
 }
 
 impl BinOpKind {
     pub fn as_str(&self) -> &'static str {
         match self {
             BinOpKind::Add => "+",
+            BinOpKind::Mul => "*",
         }
     }
 }
